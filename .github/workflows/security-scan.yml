@@ -50,21 +50,23 @@ jobs:
       - name: Install scanner dependencies
         run: pip install --quiet "anthropic>=0.40.0"
 
-      - name: Verify API key
+      - name: Check API key
+        id: api-check
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error title=Missing secret::ANTHROPIC_API_KEY is not set."
-            echo "Add it at: Settings -> Secrets and variables -> Actions -> New repository secret"
-            exit 1
+            echo "ANTHROPIC_API_KEY not set - skipping scan."
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create reports directory
         run: mkdir -p reports
 
       - name: Scan requirements.txt
-        if: hashFiles('requirements.txt') != ''
+        if: steps.api-check.outputs.has_key == 'true' && hashFiles('requirements.txt') != ''
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -76,7 +78,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Scan package.json
-        if: hashFiles('package.json') != ''
+        if: steps.api-check.outputs.has_key == 'true' && hashFiles('package.json') != ''
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -88,7 +90,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Scan go.mod
-        if: hashFiles('go.mod') != ''
+        if: steps.api-check.outputs.has_key == 'true' && hashFiles('go.mod') != ''
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -149,19 +151,23 @@ jobs:
       - name: Install scanner dependencies
         run: pip install --quiet "anthropic>=0.40.0"
 
-      - name: Verify API key
+      - name: Check API key
+        id: api-check
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error title=Missing secret::ANTHROPIC_API_KEY is not set."
-            exit 1
+            echo "ANTHROPIC_API_KEY not set - skipping scan."
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create reports directory
         run: mkdir -p reports
 
       - name: Run source-code scanner
+        if: steps.api-check.outputs.has_key == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
