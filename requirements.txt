@@ -1,0 +1,8 @@
+# Core — scanner uses only the Anthropic SDK + stdlib
+anthropic>=0.40.0
+
+# Development
+pytest>=7.4.0
+pytest-cov>=4.1.0
+black>=23.0.0
+ruff>=0.1.0

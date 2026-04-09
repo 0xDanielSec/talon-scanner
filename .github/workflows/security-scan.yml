@@ -1,0 +1,243 @@
+# Glasswing Security Scan
+#
+# Triggers
+# --------
+# push -> main  : CVE dependency scan only (fast, informational)
+# pull_request  : CVE dependency scan + source-code scan + security gate
+#
+# The security gate blocks merge if any CRITICAL severity finding is present
+# in either the CVE or source-code scan reports.
+#
+# Secrets required
+# ----------------
+#   ANTHROPIC_API_KEY  -- set at Settings -> Secrets and variables -> Actions
+
+name: Glasswing Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight scans when new commits are pushed to the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# =============================================================================
+# JOB 1 -- CVE Dependency Scan
+# Runs on: push -> main AND pull_request
+# =============================================================================
+jobs:
+  cve-scan:
+    name: CVE Dependency Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install scanner dependencies
+        run: pip install --quiet "anthropic>=0.40.0"
+
+      - name: Verify API key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error title=Missing secret::ANTHROPIC_API_KEY is not set."
+            echo "Add it at: Settings -> Secrets and variables -> Actions -> New repository secret"
+            exit 1
+          fi
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Scan requirements.txt
+        if: hashFiles('requirements.txt') != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "::group::CVE scan -- requirements.txt"
+          python glasswing.py cve \
+            --requirements requirements.txt \
+            --output reports/cve_requirements.json \
+            --verbose
+          echo "::endgroup::"
+
+      - name: Scan package.json
+        if: hashFiles('package.json') != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "::group::CVE scan -- package.json"
+          python glasswing.py cve \
+            --requirements package.json \
+            --output reports/cve_package.json \
+            --verbose
+          echo "::endgroup::"
+
+      - name: Scan go.mod
+        if: hashFiles('go.mod') != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "::group::CVE scan -- go.mod"
+          python glasswing.py cve \
+            --requirements go.mod \
+            --output reports/cve_go.json \
+            --verbose
+          echo "::endgroup::"
+
+      - name: Print CVE report summaries
+        if: always()
+        run: |
+          for f in reports/cve_*.json; do
+            [ -f "$f" ] || continue
+            echo "----------------------------------------------"
+            echo "Report: $f"
+            python glasswing.py report --input "$f" || true
+          done
+
+      - name: Check for CVE reports
+        id: cve-check
+        run: |
+          if compgen -G "reports/cve_*.json" > /dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No manifest files detected; no CVE reports generated."
+          fi
+
+      - name: Upload CVE reports
+        if: steps.cve-check.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve-reports
+          path: reports/cve_*.json
+          retention-days: 30
+
+  # ===========================================================================
+  # JOB 2 -- Source-Code Vulnerability Scan
+  # Runs on: pull_request only
+  # ===========================================================================
+  code-scan:
+    name: Source Code Scan (top 10 files)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install scanner dependencies
+        run: pip install --quiet "anthropic>=0.40.0"
+
+      - name: Verify API key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error title=Missing secret::ANTHROPIC_API_KEY is not set."
+            exit 1
+          fi
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run source-code scanner
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "::group::Source code scan -- top 10 files"
+          python glasswing.py scan \
+            --target . \
+            --top 10 \
+            --verbose
+          echo "::endgroup::"
+
+      - name: Print source scan report summary
+        if: always()
+        run: |
+          for f in reports/glasswing_*.json; do
+            [ -f "$f" ] || continue
+            echo "----------------------------------------------"
+            echo "Report: $f"
+            python glasswing.py report --input "$f" || true
+          done
+
+      - name: Upload source scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-scan-reports
+          path: reports/glasswing_*.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # JOB 3 -- Security Gate
+  # Runs on: pull_request only, after both scan jobs complete (success or fail)
+  # Fails the workflow (blocking the PR) if any CRITICAL finding is present.
+  # ===========================================================================
+  security-gate:
+    name: Security Gate -- Fail on Critical
+    needs: [cve-scan, code-scan]
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download CVE reports
+        if: needs.cve-scan.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: cve-reports
+          path: all-reports/cve
+        continue-on-error: true
+
+      - name: Download code-scan reports
+        if: needs.code-scan.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: code-scan-reports
+          path: all-reports/code
+        continue-on-error: true
+
+      - name: Evaluate findings for critical severity
+        env:
+          REPORTS_DIR: all-reports
+          CVE_SCAN_RESULT: ${{ needs.cve-scan.result }}
+          CODE_SCAN_RESULT: ${{ needs.code-scan.result }}
+        run: python scripts/check_critical.py
+
+      - name: Publish step summary
+        if: always()
+        run: |
+          summary="${{ runner.temp }}/step_summary.md"
+          if [ -f "$summary" ]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,0 +1,14 @@
+# Glasswing Scanner - Default configuration
+
+scanner:
+  timeout: 30
+  retries: 3
+  verbose: false
+
+output:
+  directory: reports/
+  format: json  # json | html | csv
+
+logging:
+  level: INFO
+  file: null  # set a path to enable file logging
