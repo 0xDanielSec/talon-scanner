@@ -291,6 +291,43 @@ def _cmd_intel(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# subcommand: surface
+# ---------------------------------------------------------------------------
+
+def _cmd_surface(args: argparse.Namespace) -> int:
+    from src.surface_mapper import SurfaceMapper
+
+    extensions = None
+    if args.lang:
+        # Validate early so the error message comes from glasswing, not the module
+        from src.surface_mapper import _LANG_EXTENSIONS
+        key = args.lang.lower().replace("-", "").replace("_", "")
+        if key not in _LANG_EXTENSIONS and key != "all":
+            known = ", ".join(sorted(_LANG_EXTENSIONS))
+            print(f"Error: Unknown language '{args.lang}'. Known: {known}, all",
+                  file=sys.stderr)
+            return 1
+
+    try:
+        mapper = SurfaceMapper(
+            repo_path  = args.target,
+            lang       = args.lang if args.lang and args.lang.lower() != "all" else None,
+            model      = args.model,
+            verbose    = args.verbose,
+            output_dir = Path(args.output_dir),
+        )
+        mapper.run()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n[!] Surface mapping interrupted.", file=sys.stderr)
+        return 130
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # subcommand: report  —  formatted console output
 # ---------------------------------------------------------------------------
 
@@ -526,6 +563,9 @@ def _cmd_report(args: argparse.Namespace) -> int:
     elif scanner_id == "glasswing-intel":
         from src.intel import print_intel_report
         print_intel_report(report)
+    elif scanner_id == "glasswing-surface":
+        from src.surface_mapper import print_surface_report
+        print_surface_report(report)
     else:
         # Unknown type — attempt generic pretty-print
         print(f"[!] Unrecognised report type '{scanner_id}'. Dumping raw JSON.")
@@ -684,6 +724,55 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print detailed progress.",
     )
 
+    # ── surface ───────────────────────────────────────────────────────────
+    p_surface = sub.add_parser(
+        "surface",
+        help="Map the attack surface of a local repository.",
+        description=(
+            "Phase 2 of the offensive research pipeline. Scans source files for "
+            "entry points, trust boundaries, and dangerous sinks, then uses Claude "
+            "to trace the top data flows between them."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python glasswing.py surface --target ./kafel --lang c\n"
+            "  python glasswing.py surface --target ./myapp --lang python --verbose\n"
+        ),
+    )
+    p_surface.add_argument(
+        "--target", "-t",
+        required=True,
+        metavar="PATH",
+        help="Local repository path to map.",
+    )
+    p_surface.add_argument(
+        "--lang", "-l",
+        default=None,
+        metavar="LANG",
+        help=(
+            "Restrict scan to one language. Choices: "
+            + ", ".join(sorted(_LANG_EXTENSIONS)) + ", all. "
+            "Default: all languages."
+        ),
+    )
+    p_surface.add_argument(
+        "--output-dir",
+        default="reports",
+        metavar="DIR",
+        help="Directory to save the surface report (default: reports/).",
+    )
+    p_surface.add_argument(
+        "--model",
+        default=default_model,
+        help=f"Claude model (default: {default_model}).",
+    )
+    p_surface.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed progress.",
+    )
+
     # ── report ────────────────────────────────────────────────────────────
     p_report = sub.add_parser(
         "report",
@@ -721,7 +810,7 @@ def main(argv: list[str] | None = None) -> int:
     _load_dotenv(args.env_file)
 
     # API key is required for subcommands that call Claude
-    if args.subcommand in ("scan", "cve", "intel"):
+    if args.subcommand in ("scan", "cve", "intel", "surface"):
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print(
                 "Error: ANTHROPIC_API_KEY is not set.\n"
@@ -732,10 +821,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     dispatch = {
-        "scan":   _cmd_scan,
-        "cve":    _cmd_cve,
-        "intel":  _cmd_intel,
-        "report": _cmd_report,
+        "scan":    _cmd_scan,
+        "cve":     _cmd_cve,
+        "intel":   _cmd_intel,
+        "surface": _cmd_surface,
+        "report":  _cmd_report,
     }
     return dispatch[args.subcommand](args)
 
