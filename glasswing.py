@@ -266,6 +266,31 @@ def _cmd_cve(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# subcommand: intel
+# ---------------------------------------------------------------------------
+
+def _cmd_intel(args: argparse.Namespace) -> int:
+    from src.intel import IntelGatherer
+
+    try:
+        gatherer = IntelGatherer(
+            target_url = args.target,
+            model      = args.model,
+            verbose    = args.verbose,
+            output_dir = Path(args.output_dir),
+        )
+        gatherer.run()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n[!] Intel gathering interrupted.", file=sys.stderr)
+        return 130
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # subcommand: report  —  formatted console output
 # ---------------------------------------------------------------------------
 
@@ -498,6 +523,9 @@ def _cmd_report(args: argparse.Namespace) -> int:
         _print_scan_report(report)
     elif scanner_id == "glasswing-cve-hunter":
         _print_cve_report(report)
+    elif scanner_id == "glasswing-intel":
+        from src.intel import print_intel_report
+        print_intel_report(report)
     else:
         # Unknown type — attempt generic pretty-print
         print(f"[!] Unrecognised report type '{scanner_id}'. Dumping raw JSON.")
@@ -617,6 +645,45 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print detailed progress.",
     )
 
+    # ── intel ─────────────────────────────────────────────────────────────
+    p_intel = sub.add_parser(
+        "intel",
+        help="Gather pre-scan intelligence on a GitHub repository.",
+        description=(
+            "Phase 1 of the offensive research pipeline. Queries OSV.dev, the GitHub "
+            "Advisory Database, recent commits, and dependency manifests to score a target "
+            "before committing to a full audit."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python glasswing.py intel --target https://github.com/google/kafel\n"
+            "  python glasswing.py intel --target openssl/openssl --verbose\n"
+        ),
+    )
+    p_intel.add_argument(
+        "--target", "-t",
+        required=True,
+        metavar="URL",
+        help="GitHub repository URL or owner/repo shorthand.",
+    )
+    p_intel.add_argument(
+        "--output-dir",
+        default="reports",
+        metavar="DIR",
+        help="Directory to save the intel report (default: reports/).",
+    )
+    p_intel.add_argument(
+        "--model",
+        default=default_model,
+        help=f"Claude model (default: {default_model}).",
+    )
+    p_intel.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed progress.",
+    )
+
     # ── report ────────────────────────────────────────────────────────────
     p_report = sub.add_parser(
         "report",
@@ -653,8 +720,8 @@ def main(argv: list[str] | None = None) -> int:
     # Load .env before touching ANTHROPIC_API_KEY
     _load_dotenv(args.env_file)
 
-    # For scan and cve, API key is required
-    if args.subcommand in ("scan", "cve"):
+    # API key is required for subcommands that call Claude
+    if args.subcommand in ("scan", "cve", "intel"):
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print(
                 "Error: ANTHROPIC_API_KEY is not set.\n"
@@ -667,6 +734,7 @@ def main(argv: list[str] | None = None) -> int:
     dispatch = {
         "scan":   _cmd_scan,
         "cve":    _cmd_cve,
+        "intel":  _cmd_intel,
         "report": _cmd_report,
     }
     return dispatch[args.subcommand](args)
