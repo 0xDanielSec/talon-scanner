@@ -294,6 +294,28 @@ def _cmd_intel(args: argparse.Namespace) -> int:
 # subcommand: surface
 # ---------------------------------------------------------------------------
 
+def _cmd_poc(args: argparse.Namespace) -> int:
+    from src.poc_generator import PocGenerator
+
+    try:
+        gen = PocGenerator(
+            reports_dir=args.reports,
+            target=args.target,
+            model=args.model,
+            verbose=args.verbose,
+            output_dir=args.output_dir if args.output_dir else None,
+        )
+        gen.run()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n[!] PoC generation interrupted.", file=sys.stderr)
+        return 130
+
+    return 0
+
+
 def _cmd_chain(args: argparse.Namespace) -> int:
     from src.impact_chainer import ImpactChainer
 
@@ -591,6 +613,9 @@ def _cmd_report(args: argparse.Namespace) -> int:
     elif scanner_id == "glasswing-impact-chainer":
         from src.impact_chainer import print_chain_report
         print_chain_report(report)
+    elif scanner_id == "glasswing-poc-generator":
+        from src.poc_generator import print_poc_report
+        print_poc_report(report)
     else:
         # Unknown type — attempt generic pretty-print
         print(f"[!] Unrecognised report type '{scanner_id}'. Dumping raw JSON.")
@@ -844,6 +869,53 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print detailed progress.",
     )
 
+    # ── poc ───────────────────────────────────────────────────────────────
+    p_poc = sub.add_parser(
+        "poc",
+        help="Generate minimal PoCs for confirmed HIGH/CRITICAL findings (Phase 4).",
+        description=(
+            "Phase 4 of the offensive research pipeline. Loads HIGH and CRITICAL "
+            "findings from glasswing-scanner reports, selects a PoC strategy per CWE, "
+            "generates a minimal safe proof-of-concept via Claude, validates it with a "
+            "second LLM pass, then saves a JSON report and a ready-to-paste Markdown "
+            "disclosure document."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python glasswing.py poc --reports ./reports --target kafel\n"
+            "  python glasswing.py poc --reports ./reports --target myapp --verbose\n"
+        ),
+    )
+    p_poc.add_argument(
+        "--reports", "-r",
+        default="reports",
+        metavar="DIR",
+        help="Directory containing glasswing JSON reports (default: reports/).",
+    )
+    p_poc.add_argument(
+        "--target", "-t",
+        required=True,
+        metavar="NAME",
+        help="Target name used to filter reports (e.g. 'kafel').",
+    )
+    p_poc.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help="Output directory for PoC reports (default: same as --reports).",
+    )
+    p_poc.add_argument(
+        "--model",
+        default=default_model,
+        help=f"Claude model (default: {default_model}).",
+    )
+    p_poc.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed progress.",
+    )
+
     # ── report ────────────────────────────────────────────────────────────
     p_report = sub.add_parser(
         "report",
@@ -881,7 +953,7 @@ def main(argv: list[str] | None = None) -> int:
     _load_dotenv(args.env_file)
 
     # API key is required for subcommands that call Claude
-    if args.subcommand in ("scan", "cve", "intel", "surface", "chain"):
+    if args.subcommand in ("scan", "cve", "intel", "surface", "chain", "poc"):
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print(
                 "Error: ANTHROPIC_API_KEY is not set.\n"
@@ -897,6 +969,7 @@ def main(argv: list[str] | None = None) -> int:
         "intel":   _cmd_intel,
         "surface": _cmd_surface,
         "chain":   _cmd_chain,
+        "poc":     _cmd_poc,
         "report":  _cmd_report,
     }
     return dispatch[args.subcommand](args)
