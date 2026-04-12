@@ -338,6 +338,33 @@ def _cmd_chain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_monitor(args: argparse.Namespace) -> int:
+    from src.monitor import ContinuousMonitor
+
+    try:
+        mon = ContinuousMonitor(
+            configs_dir  = args.configs_dir,
+            reports_dir  = args.reports_dir,
+            model        = args.model,
+            verbose      = args.verbose,
+            auto_qualify = args.auto_qualify,
+        )
+
+        if args.add_target:
+            mon.add_target(args.add_target, args.lang, args.priority)
+        elif args.status:
+            mon.show_status()
+        elif args.watch:
+            mon.run_watch()
+        else:  # --run-once
+            mon.run_once()
+    except KeyboardInterrupt:
+        print("\n[!] Monitor interrupted.", file=sys.stderr)
+        return 130
+
+    return 0
+
+
 def _cmd_surface(args: argparse.Namespace) -> int:
     from src.surface_mapper import SurfaceMapper
 
@@ -616,6 +643,9 @@ def _cmd_report(args: argparse.Namespace) -> int:
     elif scanner_id == "glasswing-poc-generator":
         from src.poc_generator import print_poc_report
         print_poc_report(report)
+    elif scanner_id == "glasswing-monitor":
+        from src.monitor import print_monitor_report
+        print_monitor_report(report)
     else:
         # Unknown type — attempt generic pretty-print
         print(f"[!] Unrecognised report type '{scanner_id}'. Dumping raw JSON.")
@@ -916,6 +946,88 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print detailed progress.",
     )
 
+    # ── monitor ───────────────────────────────────────────────────────────
+    p_monitor = sub.add_parser(
+        "monitor",
+        help="Watch repositories for security-relevant commits (Phase 5).",
+        description=(
+            "Phase 5 of the offensive research pipeline. Polls GitHub repositories "
+            "for new commits, scores them CRITICAL/HIGH/MEDIUM/LOW based on message "
+            "keywords and touched file patterns, fires alerts for high-severity "
+            "commits, and optionally auto-qualifies CRITICAL findings by running "
+            "intel gathering."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python glasswing.py monitor --run-once\n"
+            "  python glasswing.py monitor --watch\n"
+            "  python glasswing.py monitor --status\n"
+            "  python glasswing.py monitor --add-target https://github.com/org/repo"
+            " --lang c --priority high\n"
+        ),
+    )
+    monitor_mode = p_monitor.add_mutually_exclusive_group(required=True)
+    monitor_mode.add_argument(
+        "--run-once",
+        action="store_true",
+        help="Run a single sweep of all targets and exit.",
+    )
+    monitor_mode.add_argument(
+        "--watch",
+        action="store_true",
+        help="Run continuously on the configured interval.",
+    )
+    monitor_mode.add_argument(
+        "--status",
+        action="store_true",
+        help="Print the target database and exit.",
+    )
+    monitor_mode.add_argument(
+        "--add-target",
+        metavar="URL",
+        help="Add a repository to the target database.",
+    )
+    p_monitor.add_argument(
+        "--lang", "-l",
+        default="c",
+        metavar="LANG",
+        help="Language for a new target (default: c).",
+    )
+    p_monitor.add_argument(
+        "--priority",
+        default="high",
+        choices=["critical", "high", "medium", "low"],
+        help="Priority for a new target (default: high).",
+    )
+    p_monitor.add_argument(
+        "--auto-qualify",
+        action="store_true",
+        help="Auto-run intel on CRITICAL commits and prompt to escalate.",
+    )
+    p_monitor.add_argument(
+        "--configs-dir",
+        default="configs",
+        metavar="DIR",
+        help="Directory containing targets.json (default: configs/).",
+    )
+    p_monitor.add_argument(
+        "--reports-dir",
+        default="reports",
+        metavar="DIR",
+        help="Directory for alert and summary reports (default: reports/).",
+    )
+    p_monitor.add_argument(
+        "--model",
+        default=default_model,
+        help=f"Claude model for auto-qualify intel (default: {default_model}).",
+    )
+    p_monitor.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print per-commit detail.",
+    )
+
     # ── report ────────────────────────────────────────────────────────────
     p_report = sub.add_parser(
         "report",
@@ -970,6 +1082,7 @@ def main(argv: list[str] | None = None) -> int:
         "surface": _cmd_surface,
         "chain":   _cmd_chain,
         "poc":     _cmd_poc,
+        "monitor": _cmd_monitor,
         "report":  _cmd_report,
     }
     return dispatch[args.subcommand](args)

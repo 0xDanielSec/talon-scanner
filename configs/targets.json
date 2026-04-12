@@ -1,0 +1,60 @@
+{
+  "check_interval_hours": 6,
+  "last_run": "2026-04-12T17:59:55.258116+00:00",
+  "targets": [
+    {
+      "repo": "cilium/cilium",
+      "lang": "go",
+      "priority": "critical",
+      "last_commit_seen": "47acd5819d020fc79d8af84f98eebe9dd9ea9c3b",
+      "last_scan": null,
+      "findings_count": 0,
+      "status": "active"
+    },
+    {
+      "repo": "openssh/openssh-portable",
+      "lang": "c",
+      "priority": "critical",
+      "last_commit_seen": "4168c905943f7f715182180b9f7c8cda54af2514",
+      "last_scan": null,
+      "findings_count": 0,
+      "status": "active"
+    },
+    {
+      "repo": "opencontainers/runc",
+      "lang": "go",
+      "priority": "critical",
+      "last_commit_seen": "506a568da5e49d031e5d2f469b54edf74a8ac4a8",
+      "last_scan": null,
+      "findings_count": 0,
+      "status": "active"
+    },
+    {
+      "repo": "systemd/systemd",
+      "lang": "c",
+      "priority": "high",
+      "last_commit_seen": "04e05ab7244442eb6e35a15c9fda800a526379e0",
+      "last_scan": null,
+      "findings_count": 0,
+      "status": "active"
+    },
+    {
+      "repo": "haproxy/haproxy",
+      "lang": "c",
+      "priority": "high",
+      "last_commit_seen": "fb82dece4782ee146e42b17f5c7603d4371059c9",
+      "last_scan": null,
+      "findings_count": 0,
+      "status": "active"
+    },
+    {
+      "repo": "torvalds/linux",
+      "lang": "c",
+      "priority": "critical",
+      "last_commit_seen": "35bdc192d829164a6e47184d06401918fe3d7f1f",
+      "last_scan": null,
+      "findings_count": 0,
+      "status": "active"
+    }
+  ]
+}
