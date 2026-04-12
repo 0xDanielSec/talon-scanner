@@ -294,6 +294,28 @@ def _cmd_intel(args: argparse.Namespace) -> int:
 # subcommand: surface
 # ---------------------------------------------------------------------------
 
+def _cmd_chain(args: argparse.Namespace) -> int:
+    from src.impact_chainer import ImpactChainer
+
+    try:
+        chainer = ImpactChainer(
+            reports_dir=args.reports,
+            target=args.target,
+            model=args.model,
+            verbose=args.verbose,
+            output_dir=args.output_dir if args.output_dir else None,
+        )
+        chainer.run()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n[!] Impact chaining interrupted.", file=sys.stderr)
+        return 130
+
+    return 0
+
+
 def _cmd_surface(args: argparse.Namespace) -> int:
     from src.surface_mapper import SurfaceMapper
 
@@ -566,6 +588,9 @@ def _cmd_report(args: argparse.Namespace) -> int:
     elif scanner_id == "glasswing-surface":
         from src.surface_mapper import print_surface_report
         print_surface_report(report)
+    elif scanner_id == "glasswing-impact-chainer":
+        from src.impact_chainer import print_chain_report
+        print_chain_report(report)
     else:
         # Unknown type — attempt generic pretty-print
         print(f"[!] Unrecognised report type '{scanner_id}'. Dumping raw JSON.")
@@ -773,6 +798,52 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print detailed progress.",
     )
 
+    # ── chain ─────────────────────────────────────────────────────────────
+    p_chain = sub.add_parser(
+        "chain",
+        help="Chain scanner findings into higher-impact attack paths (Phase 3).",
+        description=(
+            "Phase 3 of the offensive research pipeline. Loads glasswing-scanner "
+            "reports matching the target, correlates findings by CWE escalation pairs "
+            "and same-file co-location, then uses Claude to validate and rank each "
+            "candidate attack chain by impact and exploitability."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python glasswing.py chain --reports ./reports --target kafel\n"
+            "  python glasswing.py chain --reports ./reports --target myapp --verbose\n"
+        ),
+    )
+    p_chain.add_argument(
+        "--reports", "-r",
+        default="reports",
+        metavar="DIR",
+        help="Directory containing glasswing JSON reports (default: reports/).",
+    )
+    p_chain.add_argument(
+        "--target", "-t",
+        required=True,
+        metavar="NAME",
+        help="Target name used to filter reports (e.g. 'kafel').",
+    )
+    p_chain.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help="Directory to write the chain report (default: same as --reports).",
+    )
+    p_chain.add_argument(
+        "--model",
+        default=default_model,
+        help=f"Claude model (default: {default_model}).",
+    )
+    p_chain.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed progress.",
+    )
+
     # ── report ────────────────────────────────────────────────────────────
     p_report = sub.add_parser(
         "report",
@@ -810,7 +881,7 @@ def main(argv: list[str] | None = None) -> int:
     _load_dotenv(args.env_file)
 
     # API key is required for subcommands that call Claude
-    if args.subcommand in ("scan", "cve", "intel", "surface"):
+    if args.subcommand in ("scan", "cve", "intel", "surface", "chain"):
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print(
                 "Error: ANTHROPIC_API_KEY is not set.\n"
@@ -825,6 +896,7 @@ def main(argv: list[str] | None = None) -> int:
         "cve":     _cmd_cve,
         "intel":   _cmd_intel,
         "surface": _cmd_surface,
+        "chain":   _cmd_chain,
         "report":  _cmd_report,
     }
     return dispatch[args.subcommand](args)
