@@ -21,11 +21,8 @@ ENV/
 coverage.xml
 htmlcov/
 
-# Reports output
-reports/*.html
-reports/*.json
-reports/*.csv
-reports/*.pdf
+# Reports output — excluded from public repository
+reports/
 
 # IDE
 .vscode/
