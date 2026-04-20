@@ -1,4 +1,4 @@
-# Glasswing Scanner
+# Talon Scanner
 
 A Python-based scanner project.
 
@@ -31,7 +31,7 @@ python glasswing.py --config configs/config.yaml --output reports/
 ## Project Structure
 
 ```
-glasswing-scanner/
+talon-scanner/
 ├── glasswing.py          # Entry point
 ├── src/                  # Source modules
 ├── configs/

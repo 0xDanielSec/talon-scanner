@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Glasswing Scanner — Main CLI entry point.
+Talon Scanner — Main CLI entry point.
 
 Subcommands
 -----------
@@ -17,7 +17,7 @@ Examples
 --------
   python glasswing.py scan --target ./repo --lang python --top 20
   python glasswing.py cve  --requirements requirements.txt
-  python glasswing.py report --input reports/glasswing_20240115T103000Z.json
+  python glasswing.py report --input reports/talon_20240115T103000Z.json
   python glasswing.py report --input reports/cve_report.json
 """
 
@@ -1039,7 +1039,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python glasswing.py report --input reports/glasswing_20240115T103000Z.json\n"
+            "  python glasswing.py report --input reports/talon_20240115T103000Z.json\n"
             "  python glasswing.py report --input reports/cve_report.json\n"
         ),
     )

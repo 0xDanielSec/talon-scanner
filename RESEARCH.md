@@ -1,12 +1,12 @@
 # Security Research — 0xDanielSec
 
-Vulnerability research powered by the [Glasswing Scanner](https://github.com/0xDanielSec/glasswing-scanner) pipeline.
+Vulnerability research powered by the [Talon Scanner](https://github.com/0xDanielSec/talon-scanner) pipeline.
 
 ---
 
 ## Methodology
 
-Glasswing is a five-phase agentic pipeline built on the Anthropic API. Each phase produces a structured JSON report that feeds the next. All findings go through at least two independent LLM passes before being recorded here, and every report is hash-timestamped at generation time.
+Talon is a five-phase agentic pipeline built on the Anthropic API. Each phase produces a structured JSON report that feeds the next. All findings go through at least two independent LLM passes before being recorded here, and every report is hash-timestamped at generation time.
 
 **Phase 1 — Intelligence.**
 Before touching a repository, the pipeline queries the GitHub Advisory Database, OSV.dev, and recent commit history to build a threat model. This produces a target score and a prioritised list of subsystems worth auditing, avoiding wasted effort on well-patched or low-value code paths.
