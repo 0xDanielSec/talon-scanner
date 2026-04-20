@@ -29,7 +29,7 @@ For each confirmed HIGH or CRITICAL finding, the pipeline selects a CWE-appropri
 
 | Target | Vulnerability | CWE | CVSS | Status | Disclosure Hash |
 |--------|--------------|-----|------|--------|----------------|
-| [cilium/tetragon](https://github.com/cilium/tetragon) | Null Pointer Dereference in Process Exit Handler | CWE-476 | 5.5 | Disclosed 2026-04-09 · acknowledged · awaiting patch | `24d15def769592f0` |
+| [cilium/tetragon](https://github.com/cilium/tetragon) | Null Pointer Dereference in Process Exit Handler | CWE-476 | 5.5 | Patched · CVE requested | `24d15def769592f0` |
 | [google/kafel](https://github.com/google/kafel) | Path Traversal in File Include Resolution | CWE-22 | 7.5 | [PR open](https://github.com/0xDanielSec/kafel/tree/fix/path-traversal-include-resolution) | `3a8c8b36a55ecbc7` |
 
 ### Finding Details
@@ -41,6 +41,10 @@ For each confirmed HIGH or CRITICAL finding, the pipeline selects a CWE-appropri
 - **CVSS:** 5.5 (Medium)
 - **Validation confidence:** 0.95
 - **Description:** On the process exit path, `pid` is declared as `uint32_t *` and initialised to `NULL`. The code then dereferences it unconditionally with `*pid = ctx->process_id` without allocating memory or assigning a valid pointer address. The guard `if ((ctx) && ctx->process_id)` validates the source data but does not resolve the null pointer. The result is a guaranteed segmentation fault on any process exit event reaching this handler.
+- **Status:** PATCHED
+- **Fix:** https://github.com/cilium/tetragon/pull/4880
+- **Credit:** 0xDanielSec credited in commit and pull request
+- **CVE:** Requested — pending assignment
 - **Full disclosure hash:** `24d15def769592f077b97d2d38aa89544c0d076627aa026d9a91448a1d235476`
 - **Reported:** 2026-04-09
 
