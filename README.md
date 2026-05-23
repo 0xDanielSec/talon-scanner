@@ -58,6 +58,51 @@ Findings produced by this pipeline and reported through coordinated disclosure:
 
 ---
 
+## Research
+
+Findings and methodology from this pipeline are documented in a published preprint:
+
+**DUEL Framework: Adversarial LLM Security Research**
+https://doi.org/10.5281/zenodo.20098146
+
+---
+
+## Output Example
+
+Terminal summary produced by the scan → chain → poc phases on `cilium/tetragon`:
+
+```
+[SCAN] cilium/tetragon — 2024-11-08T14:22:10Z
+Target: ./tetragon  Lang: go  Top files: 20
+
+[HIGH] pkg/sensors/tracing/kprobe.go:312
+  CWE-476: NULL Pointer Dereference
+  Entry:  handleKprobeEvent() — untrusted BPF kernel event data
+  Sink:   kprobe.Args[idx].Value (no nil guard before dereference)
+  Flow:   handleKprobeEvent → getKprobeArgs → Args[idx].Value
+  Confidence: 0.89
+
+[CHAIN] Validated attack path
+  CWE-476 → kernel NULL deref via malformed BPF event payload
+  Steps:  crafted event missing argument field → kprobe handler
+          → unguarded nil dereference → kernel panic / DoS
+  Exploitability: HIGH  Validated: yes
+
+[POC] Generating proof of concept...
+  Method: synthesised BPF event with truncated argument list
+  Safe:   yes — triggers controlled panic in isolated test kernel
+  File:   reports/tetragon_poc_20241108T142210Z.md
+
+Disclosure hash: sha3-256:a3f9c271e84b...
+Report: reports/talon_tetragon_20241108T142210Z.json
+
+[DISCLOSE] Draft report written — 90-day window starts 2024-11-08
+```
+
+Fix merged upstream: [cilium/tetragon#4880](https://github.com/cilium/tetragon/pull/4880)
+
+---
+
 ## Setup
 
 **Requirements:** Python 3.10+, Anthropic API key
