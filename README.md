@@ -21,20 +21,22 @@ This is not a traditional scanner that runs a fixed set of checks and exits. It 
 ## Pipeline
 
 ```
-intel ──► surface ──► scan ──► chain ──► poc ──► monitor
-  │           │          │        │        │         │
-  └── Target  └── Entry  └── Deep └── Attack└── PoC  └── Continuous
-      scoring     points     audit   chains   generation  watch
+intel ──► surface ──► scan ──► chain ──► poc ──► disclose ──► detect ──► monitor
+  │           │          │        │        │          │            │          │
+  └── Target  └── Entry  └── Deep └── Attack└── PoC   └── Report   └── YARA/  └── Continuous
+      scoring     points     audit   chains   generation  drafting     Sigma     watch
 ```
 
 | Phase | Command | Description |
 |-------|---------|-------------|
-| **1. Intel** | `intel` | Queries OSV.dev, GitHub Advisory DB, and commit history to score and qualify a target before full audit |
+| **1. Intel** | `intel` | Queries NVD, OSV.dev, and GitHub Advisory DB — plus commit history — to score and qualify a target before full audit |
 | **2. Surface** | `surface` | Regex-scans source for entry points, trust boundaries, and dangerous sinks; LLM traces the top data flows |
 | **3. Scan** | `scan` | Ranks files by attack-surface likelihood; deep-analyses the top-N with Claude for exploitable vulnerabilities |
 | **4. Chain** | `chain` | Correlates findings by CWE escalation pairs and co-location; LLM validates multi-step attack paths |
 | **5. PoC** | `poc` | Generates minimal, safe proofs of concept for confirmed HIGH/CRITICAL findings; second model pass validates each |
-| **6. Monitor** | `monitor` | Polls target repositories for security-relevant commits; auto-qualifies CRITICAL findings via intel |
+| **6. Disclose** | `disclose` | Produces structured coordinated-disclosure reports with SHA3-256 timestamps and 90-day window tracking |
+| **7. Detect** | `detect` | Generates YARA rules and Sigma signatures from confirmed findings so defenders can detect exploitation attempts |
+| **Monitor** | `monitor` | Polls target repositories for security-relevant commits; auto-qualifies CRITICAL findings via intel |
 
 ---
 
@@ -158,7 +160,13 @@ python glasswing.py chain --reports ./reports --target name
 # Phase 5 — generate proofs of concept for confirmed findings
 python glasswing.py poc --reports ./reports --target name
 
-# Phase 6 — single sweep of all monitored repositories
+# Phase 6 — produce a coordinated-disclosure report for a confirmed finding
+python glasswing.py disclose --reports ./reports --target name
+
+# Phase 7 — generate YARA/Sigma detection rules from confirmed findings
+python glasswing.py detect --reports ./reports --target name
+
+# Monitor — single sweep of all monitored repositories
 python glasswing.py monitor --run-once
 
 # Render any saved report in the terminal
@@ -175,12 +183,14 @@ Supported languages for `--lang`: `c`, `cpp`, `go`, `python`, `rust`, `javascrip
 talon-scanner/
 ├── glasswing.py           # CLI entry point — all subcommands
 ├── src/
-│   ├── intel.py           # Phase 1: repository intelligence gathering
-│   ├── surface_mapper.py  # Phase 2: entry points, boundaries, sinks, flows
-│   ├── scanner.py         # Phase 3: ranked file scan + LLM deep analysis
-│   ├── impact_chainer.py  # Phase 4: CWE escalation chains + LLM validation
-│   ├── poc_generator.py   # Phase 5: PoC generation + second-pass validation
-│   └── monitor.py         # Phase 6: continuous commit monitoring
+│   ├── intel.py                # Phase 1: NVD + OSV + GitHub advisory intel
+│   ├── surface_mapper.py       # Phase 2: entry points, boundaries, sinks, flows
+│   ├── scanner.py              # Phase 3: ranked file scan + LLM deep analysis
+│   ├── impact_chainer.py       # Phase 4: CWE escalation chains + LLM validation
+│   ├── poc_generator.py        # Phase 5: PoC generation + second-pass validation
+│   ├── disclosure_generator.py # Phase 6: coordinated disclosure report engine
+│   ├── detection_generator.py  # Phase 7: YARA/Sigma rule generation
+│   └── monitor.py              # Monitor: continuous commit monitoring
 ├── configs/
 │   └── targets.json       # Monitor target list with check intervals
 ├── reports/               # Scan output (gitignored)
