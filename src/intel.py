@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import textwrap
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,6 +46,10 @@ DEFAULT_MODEL      = "claude-sonnet-4-20250514"
 GITHUB_API         = "https://api.github.com"
 OSV_QUERY_URL      = "https://api.osv.dev/v1/query"
 OSV_BATCH_URL      = "https://api.osv.dev/v1/querybatch"
+NVD_BASE_URL       = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+NVD_TIMEOUT        = 10
+NVD_RATE_LIMIT     = 5
+NVD_RATE_WINDOW    = 30.0
 HTTP_TIMEOUT       = 20
 COMMIT_LIMIT       = 50
 DETAIL_FETCH_LIMIT = 5     # max per-commit detail fetches (files changed)
@@ -97,6 +102,7 @@ class _IntelState:
     cve_summary: dict[str, Any]  = field(default_factory=dict)
     advisories:  list[dict]      = field(default_factory=list)
     osv_vulns:   list[dict]      = field(default_factory=list)
+    nvd_vulns:   list[dict]      = field(default_factory=list)
     commits_analyzed:   int      = 0
     suspicious_commits: list[dict] = field(default_factory=list)
     manifests_found:    list[str]  = field(default_factory=list)
@@ -184,6 +190,100 @@ def _osv_batch(queries: list[dict]) -> list[dict]:
             return json.loads(resp.read().decode("utf-8", errors="replace")).get("results", [])
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# NVD helpers
+# ---------------------------------------------------------------------------
+
+_nvd_request_times: list[float] = []
+
+
+def _nvd_throttle() -> None:
+    """Enforce 5 requests per 30-second window (no-auth NVD rate limit)."""
+    now = time.monotonic()
+    while _nvd_request_times and now - _nvd_request_times[0] > NVD_RATE_WINDOW:
+        _nvd_request_times.pop(0)
+    if len(_nvd_request_times) >= NVD_RATE_LIMIT:
+        wait = NVD_RATE_WINDOW - (now - _nvd_request_times[0]) + 0.1
+        if wait > 0:
+            time.sleep(wait)
+    _nvd_request_times.append(time.monotonic())
+
+
+def _nvd_get(params: dict) -> dict:
+    """GET from NVD CVE 2.0 API. Returns parsed JSON or {} on any error."""
+    _nvd_throttle()
+    url = NVD_BASE_URL + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url)
+    req.add_header("Accept", "application/json")
+    req.add_header("User-Agent", "glasswing-scanner/1.0")
+    try:
+        with urllib.request.urlopen(req, timeout=NVD_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception:
+        return {}
+
+
+def _parse_nvd_response(data: dict) -> list[dict]:
+    """Extract normalized CVE list from an NVD CVE 2.0 API response."""
+    results: list[dict] = []
+    for item in data.get("vulnerabilities", []):
+        cve = item.get("cve", {})
+        cve_id = cve.get("id", "")
+        if not cve_id:
+            continue
+        desc = next(
+            (d.get("value", "") for d in cve.get("descriptions", []) if d.get("lang") == "en"),
+            "",
+        )
+        cvss_score: float | None = None
+        metrics = cve.get("metrics", {})
+        for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+            entries = metrics.get(key, [])
+            if entries:
+                cvss_score = entries[0].get("cvssData", {}).get("baseScore")
+                break
+        results.append({
+            "id":            cve_id,
+            "cvss_score":    cvss_score,
+            "description":   desc,
+            "published":     cve.get("published", ""),
+            "last_modified": cve.get("lastModified", ""),
+        })
+    return results
+
+
+def _nvd_cvss_severity(score: float | None) -> str:
+    if score is None:
+        return "UNKNOWN"
+    if score >= 9.0:
+        return "CRITICAL"
+    if score >= 7.0:
+        return "HIGH"
+    if score >= 4.0:
+        return "MEDIUM"
+    return "LOW"
+
+
+def query_nvd(owner: str, repo: str) -> list[dict]:
+    """
+    Query NVD CVE 2.0 API for CVEs related to a GitHub owner/repo.
+
+    Tries CPE search first; falls back to keyword search.
+    Returns list of dicts: id, cvss_score, description, published, last_modified.
+    """
+    vendor  = re.sub(r"[^a-z0-9]", "", owner.lower())
+    product = repo.lower()
+
+    data    = _nvd_get({"cpeName": f"cpe:2.3:*:{vendor}:{product}:*"})
+    results = _parse_nvd_response(data)
+
+    if not results:
+        data    = _nvd_get({"keywordSearch": product})
+        results = _parse_nvd_response(data)
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +511,11 @@ def _fetch_osv_cves(owner: str, repo: str, language: str, latest_sha: str) -> li
     return result
 
 
-def _build_cve_summary(github_advisories: list[dict], osv_vulns: list[dict]) -> dict[str, Any]:
+def _build_cve_summary(
+    github_advisories: list[dict],
+    osv_vulns: list[dict],
+    nvd_vulns: list[dict],
+) -> dict[str, Any]:
     sev_dist: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
     dates: list[str] = []
 
@@ -427,6 +531,12 @@ def _build_cve_summary(github_advisories: list[dict], osv_vulns: list[dict]) -> 
         if item.get("published"):
             dates.append(item["published"])
 
+    for item in nvd_vulns:
+        key = _nvd_cvss_severity(item.get("cvss_score"))
+        sev_dist[key if key in sev_dist else "UNKNOWN"] += 1
+        if item.get("published"):
+            dates.append(item["published"])
+
     last_cve_date = max(dates) if dates else None
     is_cold = False
     if last_cve_date:
@@ -437,9 +547,10 @@ def _build_cve_summary(github_advisories: list[dict], osv_vulns: list[dict]) -> 
             pass
 
     return {
-        "total":          len(github_advisories) + len(osv_vulns),
+        "total":          len(github_advisories) + len(osv_vulns) + len(nvd_vulns),
         "github_count":   len(github_advisories),
         "osv_count":      len(osv_vulns),
+        "nvd_count":      len(nvd_vulns),
         "severity_dist":  sev_dist,
         "last_cve_date":  last_cve_date,
         "is_cold_target": is_cold,
@@ -566,6 +677,7 @@ def _compute_score(
     suspicious_commits: list[dict],
     dep_vulns:          list[dict],
     last_push:          str,
+    nvd_vulns:          list[dict] | None = None,
 ) -> tuple[int, dict[str, int], str]:
     breakdown: dict[str, int] = {}
 
@@ -584,6 +696,17 @@ def _compute_score(
 
     if dep_vulns:
         breakdown["Vulnerable dependencies"] = 1
+
+    if nvd_vulns:
+        now = datetime.now(timezone.utc)
+        cutoff = now.replace(year=now.year - 1)
+        recent = [
+            v for v in nvd_vulns
+            if v.get("published") and
+            datetime.fromisoformat(v["published"].replace("Z", "+00:00")) > cutoff
+        ]
+        if recent:
+            breakdown["NVD CVEs (last 12 months)"] = 2
 
     if last_push:
         try:
@@ -736,6 +859,7 @@ def _build_report(s: _IntelState) -> dict[str, Any]:
             "summary":    s.cve_summary,
             "advisories": s.advisories,
             "osv_vulns":  s.osv_vulns,
+            "nvd_vulns":  s.nvd_vulns,
         },
         "phase2_commit_analysis": {
             "commits_analyzed":  s.commits_analyzed,
@@ -873,6 +997,36 @@ def print_intel_report(report: dict[str, Any]) -> None:
             f"  {adv.get('ghsa_id','')}  {adv.get('summary','')[:52]}"
         )
 
+    # NVD sub-section
+    nvd_vulns = p1.get("nvd_vulns", [])
+    nvd_count = cs.get("nvd_count", 0)
+    if nvd_count or nvd_vulns:
+        n_crit = sum(1 for v in nvd_vulns if _nvd_cvss_severity(v.get("cvss_score")) == "CRITICAL")
+        n_high = sum(1 for v in nvd_vulns if _nvd_cvss_severity(v.get("cvss_score")) == "HIGH")
+        sev_tag = ""
+        if n_crit or n_high:
+            parts = []
+            if n_crit:
+                parts.append(_c(f"{n_crit} critical", _RED + _BOLD))
+            if n_high:
+                parts.append(_c(f"{n_high} high", _RED))
+            sev_tag = "  (" + ", ".join(parts) + ")"
+        print(f"  {'NVD CVEs':<14}{nvd_count} found{sev_tag}")
+        if nvd_vulns:
+            most_recent = max(nvd_vulns, key=lambda v: v.get("published", ""), default=None)
+            if most_recent:
+                score_str = (
+                    f"CVSS {most_recent['cvss_score']:.1f}"
+                    if most_recent.get("cvss_score") is not None
+                    else "no CVSS"
+                )
+                pub = (most_recent.get("published") or "")[:10]
+                print(
+                    f"  {'Most recent':<14}"
+                    f"{_c(most_recent['id'], _BOLD)}  "
+                    f"({score_str}, {pub})"
+                )
+
     # ── Phase 2: Suspicious Commits ──────────────────────────────────────
     suspicious = p2.get("suspicious_commits", [])
     analyzed   = p2.get("commits_analyzed", 0)
@@ -1009,13 +1163,28 @@ class IntelGatherer:
         s.osv_vulns  = _fetch_osv_cves(self.owner, self.repo, language, latest_sha)
         self._vlog(f"{len(s.osv_vulns)} OSV vulnerability(s)")
 
-        s.cve_summary = _build_cve_summary(s.advisories, s.osv_vulns)
+        self._log("[*] Querying NVD …")
+        raw_nvd = query_nvd(self.owner, self.repo)
+        # Deduplicate: drop NVD entries already covered by OSV/GitHub advisories
+        known_cve_ids: set[str] = set()
+        for v in s.osv_vulns:
+            if v["id"].startswith("CVE-"):
+                known_cve_ids.add(v["id"])
+            known_cve_ids.update(a for a in v.get("aliases", []) if a.startswith("CVE-"))
+        for adv in s.advisories:
+            if adv.get("cve_id"):
+                known_cve_ids.add(adv["cve_id"])
+        s.nvd_vulns = [v for v in raw_nvd if v["id"] not in known_cve_ids]
+        self._vlog(f"{len(raw_nvd)} NVD result(s), {len(s.nvd_vulns)} new after dedup")
+
+        s.cve_summary = _build_cve_summary(s.advisories, s.osv_vulns, s.nvd_vulns)
         cs = s.cve_summary
         sev = cs["severity_dist"]
         self._log(
             f"    {cs['total']} CVE(s)  "
             f"CRIT={sev.get('CRITICAL',0)}  HIGH={sev.get('HIGH',0)}  "
-            f"MED={sev.get('MEDIUM',0)}  LOW={sev.get('LOW',0)}"
+            f"MED={sev.get('MEDIUM',0)}  LOW={sev.get('LOW',0)}  "
+            f"(NVD: {cs.get('nvd_count', 0)})"
         )
         if cs.get("is_cold_target"):
             self._log("    [!] Cold target — last CVE > 2 years ago, lower priority")
@@ -1056,6 +1225,7 @@ class IntelGatherer:
             suspicious_commits = s.suspicious_commits,
             dep_vulns          = s.dep_vulns,
             last_push          = s.repo_info.get("pushed_at", ""),
+            nvd_vulns          = s.nvd_vulns,
         )
         self._log(f"    Score: {s.score}/10  →  {s.recommendation}")
 
