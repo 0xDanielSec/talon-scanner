@@ -338,6 +338,53 @@ def _cmd_chain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_detect(args: argparse.Namespace) -> int:
+    from src.detection_generator import DetectionGenerator
+
+    try:
+        gen = DetectionGenerator(
+            reports_dir=args.reports,
+            target=args.target,
+            model=args.model,
+            verbose=args.verbose,
+            output_dir=args.output_dir if args.output_dir else None,
+            finding_idx=args.finding,
+        )
+        gen.run()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n[!] Detection generation interrupted.", file=sys.stderr)
+        return 130
+
+    return 0
+
+
+def _cmd_disclose(args: argparse.Namespace) -> int:
+    from src.disclosure_generator import DisclosureGenerator
+
+    try:
+        gen = DisclosureGenerator(
+            reports_dir=args.reports,
+            target=args.target,
+            model=args.model,
+            verbose=args.verbose,
+            output_dir=args.output_dir if args.output_dir else None,
+            repo_path=args.repo_path if args.repo_path else None,
+            finding_idx=args.finding,
+        )
+        gen.run()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n[!] Disclosure generation interrupted.", file=sys.stderr)
+        return 130
+
+    return 0
+
+
 def _cmd_monitor(args: argparse.Namespace) -> int:
     from src.monitor import ContinuousMonitor
 
@@ -946,6 +993,123 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print detailed progress.",
     )
 
+    # ── detect ────────────────────────────────────────────────────────────
+    p_detect = sub.add_parser(
+        "detect",
+        help="Generate KQL, Sigma, and YARA detection rules for findings (Phase 7).",
+        description=(
+            "Phase 7 of the offensive research pipeline. Loads confirmed HIGH and "
+            "CRITICAL findings from glasswing-scanner reports, maps each CWE to a "
+            "detection strategy, asks Claude to generate KQL (Sentinel/Defender XDR), "
+            "Sigma (universal SIEM), and YARA (file/memory) rules, then validates "
+            "each rule set for syntax and false-positive risk before saving."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python glasswing.py detect --reports ./reports --target cilium\n"
+            "  python glasswing.py detect --reports ./reports --target cilium --finding 1\n"
+        ),
+    )
+    p_detect.add_argument(
+        "--reports", "-r",
+        default="reports",
+        metavar="DIR",
+        help="Directory containing glasswing JSON reports (default: reports/).",
+    )
+    p_detect.add_argument(
+        "--target", "-t",
+        required=True,
+        metavar="NAME",
+        help="Target name used to filter reports (e.g. 'cilium').",
+    )
+    p_detect.add_argument(
+        "--finding", "-f",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Generate rules for the Nth finding only (1-based; default: all HIGH/CRITICAL).",
+    )
+    p_detect.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help="Output directory (default: same as --reports).",
+    )
+    p_detect.add_argument(
+        "--model",
+        default=default_model,
+        help=f"Claude model (default: {default_model}).",
+    )
+    p_detect.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed progress.",
+    )
+
+    # ── disclose ──────────────────────────────────────────────────────────
+    p_disclose = sub.add_parser(
+        "disclose",
+        help="Generate disclosure emails and GitHub Advisory drafts (Phase 6b).",
+        description=(
+            "Phase 6b of the offensive research pipeline. Loads confirmed HIGH and "
+            "CRITICAL findings from glasswing-scanner reports, detects the project's "
+            "security contact via SECURITY.md, asks Claude to write all disclosure "
+            "prose, then saves a ready-to-send plain-text email and a GitHub Security "
+            "Advisory Markdown draft for each finding."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python glasswing.py disclose --reports ./reports --target cilium\n"
+            "  python glasswing.py disclose --reports ./reports --target cilium"
+            " --finding 1\n"
+            "  python glasswing.py disclose --reports ./reports --target cilium"
+            " --repo-path ./tetragon\n"
+        ),
+    )
+    p_disclose.add_argument(
+        "--reports", "-r",
+        default="reports",
+        metavar="DIR",
+        help="Directory containing glasswing JSON reports (default: reports/).",
+    )
+    p_disclose.add_argument(
+        "--target", "-t",
+        required=True,
+        metavar="NAME",
+        help="Target name used to filter reports (e.g. 'cilium').",
+    )
+    p_disclose.add_argument(
+        "--finding", "-f",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Generate for the Nth finding only (1-based; default: all HIGH/CRITICAL).",
+    )
+    p_disclose.add_argument(
+        "--repo-path",
+        default=None,
+        metavar="PATH",
+        help="Local clone of the target repo — used to read SECURITY.md for contact info.",
+    )
+    p_disclose.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help="Output directory (default: same as --reports).",
+    )
+    p_disclose.add_argument(
+        "--model",
+        default=default_model,
+        help=f"Claude model (default: {default_model}).",
+    )
+    p_disclose.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed progress.",
+    )
+
     # ── monitor ───────────────────────────────────────────────────────────
     p_monitor = sub.add_parser(
         "monitor",
@@ -1065,7 +1229,7 @@ def main(argv: list[str] | None = None) -> int:
     _load_dotenv(args.env_file)
 
     # API key is required for subcommands that call Claude
-    if args.subcommand in ("scan", "cve", "intel", "surface", "chain", "poc"):
+    if args.subcommand in ("scan", "cve", "intel", "surface", "chain", "poc", "detect", "disclose"):
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print(
                 "Error: ANTHROPIC_API_KEY is not set.\n"
@@ -1076,14 +1240,16 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     dispatch = {
-        "scan":    _cmd_scan,
-        "cve":     _cmd_cve,
-        "intel":   _cmd_intel,
-        "surface": _cmd_surface,
-        "chain":   _cmd_chain,
-        "poc":     _cmd_poc,
-        "monitor": _cmd_monitor,
-        "report":  _cmd_report,
+        "scan":     _cmd_scan,
+        "cve":      _cmd_cve,
+        "intel":    _cmd_intel,
+        "surface":  _cmd_surface,
+        "chain":    _cmd_chain,
+        "poc":      _cmd_poc,
+        "detect":   _cmd_detect,
+        "disclose": _cmd_disclose,
+        "monitor":  _cmd_monitor,
+        "report":   _cmd_report,
     }
     return dispatch[args.subcommand](args)
 
